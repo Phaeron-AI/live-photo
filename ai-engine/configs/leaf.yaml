@@ -1,0 +1,47 @@
+flow:
+  feather_radius: 4
+  method: barycentric
+  rbf_regularisation: 0.001
+  sg_poly: 3
+  sg_window: 11
+  spatial_sigma: 1.2
+force:
+  drag: 0.02
+  gravity_y: 80
+  gust_enabled: true
+  gust_peak_frac: 2.0
+  preset: leaf
+  strength: 1.0
+  sway_amp_frac: 0.35
+  sway_period: 2.2
+  turbulence_amp_frac: 0.15
+  wind_direction: right
+  wind_speed: 60
+material:
+  override: leaf
+name: leaf
+output:
+  format: gif
+  fps: 24
+  loop: true
+  max_dim: 512
+  n_frames: 72
+  quality: 8
+physics:
+  bend_stiffness: 150
+  damping: 0.3
+  mass_density: 0.0008
+  max_particles: 350
+  mesh_density: 0.015
+  pin_edge: top
+  shear_stiffness: 400
+  stiffness: 800
+  substeps: 6
+synthesis:
+  bg_darken: 0.0
+  ema_alpha: 0.88
+  fg_feather: 3
+  inpainter_enabled: false
+  loop_blend_frames: 8
+  shadow_enabled: false
+  warp_device: cpu

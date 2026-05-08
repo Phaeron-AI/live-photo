@@ -1,0 +1,47 @@
+flow:
+  feather_radius: 3
+  method: barycentric
+  rbf_regularisation: 0.001
+  sg_poly: 3
+  sg_window: 9
+  spatial_sigma: 1.2
+force:
+  drag: 0.02
+  gravity_y: 200
+  gust_enabled: true
+  gust_peak_frac: 2.0
+  preset: hair
+  strength: 1.0
+  sway_amp_frac: 0.35
+  sway_period: 2.2
+  turbulence_amp_frac: 0.15
+  wind_direction: right
+  wind_speed: 80
+material:
+  override: hair
+name: hair
+output:
+  format: gif
+  fps: 30
+  loop: true
+  max_dim: 512
+  n_frames: 60
+  quality: 8
+physics:
+  bend_stiffness: 30
+  damping: 0.7
+  mass_density: 0.0008
+  max_particles: 350
+  mesh_density: 0.015
+  pin_edge: top
+  shear_stiffness: 100
+  stiffness: 200
+  substeps: 6
+synthesis:
+  bg_darken: 0.0
+  ema_alpha: 0.85
+  fg_feather: 3
+  inpainter_enabled: false
+  loop_blend_frames: 8
+  shadow_enabled: false
+  warp_device: cpu
