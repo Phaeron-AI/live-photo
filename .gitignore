@@ -1,0 +1,38 @@
+# Virtual Environment
+.venv/
+
+# Environment Variables
+.env
+*.env*
+.env*
+
+# ZIP files
+*.zip
+
+# Python Bytecode
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Dataset Related Files
+data/
+*.pt
+*.pth
+*.safetensors
+dataset/
+
+# Documentation will Temporarily be Ignored
+docs/
+
+# Image, G.I.F & Video Files
+*.jpg
+*.png
+*.gif
+*.mp4
+*.avi
+*.mkv
+*.mov
+
+# Model Checkpoints
+checkpoints/
