@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import numpy as np
 from dataclasses import dataclass, field
-from typing import Callable, Optional, Literal
+from typing import Optional, Literal
 
 @dataclass
 class ForceConfig:
@@ -312,6 +312,22 @@ class ForceScheduler:
         s.add_sway(period=0.45, amplitude=30.0, axis='y', phase=0.5)
         s.add_turbulence(base_amplitude=60.0, base_freq=4.0, n_octaves=5)
         s.add_gust(t_start=0.3, duration=0.25, direction='right', peak=200.0)
+        return s
+
+    @classmethod
+    def smoke_rising(cls) -> 'ForceScheduler':
+        """
+        Smoke / fire: strong upward buoyancy, lateral drift, high turbulence.
+        Gravity is negative (upward in image-space) to simulate buoyancy.
+        """
+        s = cls(
+            base_wind=np.array([20.0, 0.0]),
+            base_gravity=np.array([0.0, -180.0]),
+            base_drag=0.015,
+        )
+        s.add_sway(period=1.4, amplitude=50.0, axis='x')
+        s.add_sway(period=0.6, amplitude=15.0, axis='x', phase=1.1)
+        s.add_turbulence(base_amplitude=40.0, base_freq=3.5, n_octaves=5)
         return s
 
     # ------------------------------------------------------------------
