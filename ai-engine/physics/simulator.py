@@ -31,40 +31,11 @@ References:
 from __future__ import annotations
 
 import numpy as np
-from dataclasses import dataclass
 from typing import Optional
 
-from physics.mesh import Mesh, Particle, Spring
+from motion.flow_scheduler import ForceConfig  # canonical definition lives there
+from physics.mesh import Mesh
 
-
-# ---------------------------------------------------------------------------
-# Force configuration
-# ---------------------------------------------------------------------------
-
-@dataclass
-class ForceConfig:
-    """
-    External forces applied to the simulation.
-
-    All values are in simulation units (pixels, relative mass units).
-    Tune these to get visually plausible motion at image resolution.
-    """
-    gravity: np.ndarray = None              # e.g. np.array([0, 9.8]) — downward in image-space # type: ignore[assignment]
-    wind: np.ndarray = None                 # e.g. np.array([2.0, -0.5]) # type: ignore[assignment]
-    wind_noise_scale: float = 0.3           # turbulence amplitude (fraction of wind magnitude)
-    wind_noise_freq: float = 2.0            # Hz
-    drag: float = 0.01                      # air resistance coefficient
-
-    def __post_init__(self):
-        if self.gravity is None:
-            self.gravity = np.array([0.0, 980.0])
-        if self.wind is None:
-            self.wind = np.array([0.0, 0.0])
-
-
-# ---------------------------------------------------------------------------
-# Simulator
-# ---------------------------------------------------------------------------
 
 class PhysicsSimulator:
     """
@@ -86,197 +57,168 @@ class PhysicsSimulator:
 
     def __init__(
         self,
-        mesh: Mesh,
-        dt: float = 1.0 / 60.0,
-        forces: Optional[ForceConfig] = None,
-        substeps: int = 4,
+        mesh:      Mesh,
+        dt:        float = 1.0 / 60.0,
+        forces:    Optional[ForceConfig] = None,
+        substeps:  int = 4,
     ):
-      """
-      Args:
-          mesh:      Triangulated particle mesh from MeshBuilder.
-          dt:        Simulation timestep in seconds. 1/60 = 60fps.
-          forces:    External force configuration.
-          substeps:  Number of physics substeps per dt.
-                      More substeps = more stable but slower.
-                      Use 4-8 for stiff springs.
-      """
-      self.mesh     = mesh
-      self.dt       = dt
-      self.sub_dt   = dt / substeps
-      self.substeps = substeps
-      self.forces   = forces or ForceConfig()
-      self.time     = 0.0
+        self.mesh      = mesh
+        self.dt        = dt
+        self.sub_dt    = dt / substeps
+        self.substeps  = substeps
+        self.forces    = forces or ForceConfig()
+        self.time      = 0.0
 
-      self.positions  = np.array([p.position for p in mesh.particles])  # (N, 2)
-      self.velocities = np.array([p.velocity for p in mesh.particles])  # (N, 2)
-      self.masses     = np.array([p.mass     for p in mesh.particles])  # (N,)
-      self.pinned     = np.array([p.pinned   for p in mesh.particles])  # (N,) bool
+        self.positions  = np.array([p.position for p in mesh.particles])  # (N, 2)
+        self.velocities = np.array([p.velocity for p in mesh.particles])  # (N, 2)
+        self.masses     = np.array([p.mass     for p in mesh.particles])  # (N,)
+        self.pinned     = np.array([p.pinned   for p in mesh.particles])  # (N,) bool
 
-      self.rest_positions = self.positions.copy()                        # (N, 2)
+        self.rest_positions = self.positions.copy()                        # (N, 2)
+        self.inv_masses     = np.where(self.pinned, 0.0, 1.0 / self.masses)
 
-      self.inv_masses = np.where(self.pinned, 0.0, 1.0 / self.masses)   # (N,)
-
-      self._cache_springs()
-
-      self.accelerations = self._compute_accelerations()
+        self._cache_springs()
+        self.accelerations = self._compute_accelerations()
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
     def step(self) -> None:
-      """Advance simulation by one timestep (self.dt), using substeps."""
-      for _ in range(self.substeps):
-        self._velocity_verlet_step(self.sub_dt)
-      self.time += self.dt
-      # FIX: _sync_particles() was previously called unconditionally on
-      # every step(), adding an O(N) Python loop after every timestep.
-      # Sync is now deferred — call sync_particles() explicitly when
-      # Particle objects need to be read (e.g. for serialisation or
-      # external visualisers). The hot path (get_positions /
-      # get_displacements) reads directly from the numpy arrays.
+        """Advance simulation by one timestep (self.dt), using substeps."""
+        for _ in range(self.substeps):
+            self._velocity_verlet_step(self.sub_dt)
+        self.time += self.dt
 
     def sync_particles(self) -> None:
-      """
-      Copy numpy state back to the Particle objects on mesh.particles.
+        """
+        Copy numpy state back to the Particle objects on mesh.particles.
 
-      Call this only when external code needs to iterate over Particle
-      instances. Avoid calling inside the simulation loop — it adds an
-      O(N) Python loop per call.
-      """
-      for i, p in enumerate(self.mesh.particles):
-        p.position = self.positions[i].copy()
-        p.velocity = self.velocities[i].copy()
+        Call only when external code needs to iterate over Particle instances.
+        Avoid inside the simulation loop — it adds an O(N) Python loop per call.
+        """
+        for i, p in enumerate(self.mesh.particles):
+            p.position = self.positions[i].copy()
+            p.velocity = self.velocities[i].copy()
 
     def get_positions(self) -> np.ndarray:
-      """Return current particle positions, shape (N, 2)."""
-      return self.positions.copy()
+        """Return current particle positions, shape (N, 2)."""
+        return self.positions.copy()
 
     def get_displacements(self) -> np.ndarray:
-      """Return displacement from rest position for each particle, shape (N, 2)."""
-      return self.positions - self.rest_positions
+        """Return displacement from rest position for each particle, shape (N, 2)."""
+        return self.positions - self.rest_positions
 
     def pin_particle(self, idx: int) -> None:
-      self.pinned[idx]     = True
-      self.inv_masses[idx] = 0.0
+        self.pinned[idx]     = True
+        self.inv_masses[idx] = 0.0
 
     def apply_impulse(self, idx: int, impulse: np.ndarray) -> None:
-      """Apply an instantaneous velocity change to particle idx."""
-      self.velocities[idx] += impulse * self.inv_masses[idx]
-
-    def apply_wind(self, wind: np.ndarray) -> None:
-      """Update wind force vector."""
-      self.forces.wind = wind.astype(np.float64)
+        """Apply an instantaneous velocity change to particle idx."""
+        self.velocities[idx] += impulse * self.inv_masses[idx]
 
     # ------------------------------------------------------------------
     # Core integrator
     # ------------------------------------------------------------------
 
     def _velocity_verlet_step(self, dt: float) -> None:
-      """
-      One Velocity Verlet substep.
+        """
+        One Velocity Verlet substep.
 
-      Mathematics:
-        x(t+dt) = x(t) + v(t)*dt + 0.5*a(t)*dt²
-        a(t+dt) = F(x(t+dt)) / m
-        v(t+dt) = v(t) + 0.5*(a(t) + a(t+dt))*dt
-      """
-      a_old = self.accelerations
+        Mathematics:
+          x(t+dt) = x(t) + v(t)*dt + 0.5*a(t)*dt²
+          a(t+dt) = F(x(t+dt)) / m
+          v(t+dt) = v(t) + 0.5*(a(t) + a(t+dt))*dt
+        """
+        a_old = self.accelerations
 
-      self.positions += (self.velocities * dt + 0.5 * a_old * dt * dt)
+        self.positions += self.velocities * dt + 0.5 * a_old * dt * dt
 
-      a_new = self._compute_accelerations()
+        a_new = self._compute_accelerations()
 
-      self.velocities += 0.5 * (a_old + a_new) * dt
+        self.velocities += 0.5 * (a_old + a_new) * dt
 
-      if self.pinned.any():
-        self.velocities[self.pinned] = 0.0
-        self.positions[self.pinned]  = self.rest_positions[self.pinned]
+        if self.pinned.any():
+            self.velocities[self.pinned] = 0.0
+            self.positions[self.pinned]  = self.rest_positions[self.pinned]
 
-      self.accelerations = a_new
+        self.accelerations = a_new
 
     # ------------------------------------------------------------------
     # Force computation
     # ------------------------------------------------------------------
 
     def _compute_accelerations(self) -> np.ndarray:
-      """
-      Compute net acceleration for each particle.
+        """
+        Compute net acceleration for each particle.
 
-      a = F_total / m = (F_spring + F_gravity + F_wind + F_drag) / m
-      """
-      forces = np.zeros_like(self.positions)
+        a = F_total / m = (F_spring + F_gravity + F_wind + F_drag) / m
+        """
+        forces = np.zeros_like(self.positions)
 
-      self._accumulate_spring_forces(forces)
-      self._accumulate_external_forces(forces)
+        self._accumulate_spring_forces(forces)
+        self._accumulate_external_forces(forces)
 
-      forces -= self.forces.drag * self.velocities * self.masses[:, None]
+        forces -= self.forces.drag * self.velocities * self.masses[:, None]
 
-      acc = forces * self.inv_masses[:, None]
-      return acc
+        return forces * self.inv_masses[:, None]
 
     def _accumulate_spring_forces(self, forces: np.ndarray) -> None:
-      """
-      Vectorised spring force computation.
+        """
+        Vectorised spring force computation.
 
-      For each spring connecting particles i and j:
+        For each spring connecting particles i and j:
+          delta = x_j - x_i
+          dist  = ||delta||
+          unit  = delta / dist
+          F_spring  = -k * (dist - L₀) * unit
+          F_damping = -c * (v_j - v_i) · unit * unit
+        """
+        p0 = self.spring_p0
+        p1 = self.spring_p1
 
-        delta = x_j - x_i
-        dist  = ||delta||
+        delta = self.positions[p1] - self.positions[p0]
+        dist  = np.linalg.norm(delta, axis=1, keepdims=True)
+        dist  = np.maximum(dist, 1e-8)
         unit  = delta / dist
 
-        F_spring  = -k * (dist - L₀) * unit
-        F_damping = -c * (v_j - v_i) · unit * unit
-      """
-      p0 = self.spring_p0
-      p1 = self.spring_p1
+        stretch = dist.squeeze() - self.spring_rest
+        f_mag   = self.spring_k * stretch
 
-      x0 = self.positions[p0]
-      x1 = self.positions[p1]
-      v0 = self.velocities[p0]
-      v1 = self.velocities[p1]
+        rel_vel    = self.velocities[p1] - self.velocities[p0]
+        vel_along  = (rel_vel * unit).sum(axis=1)
+        f_mag     += self.spring_c * vel_along
 
-      delta = x1 - x0
-      dist = np.linalg.norm(delta, axis=1, keepdims=True)
-      dist = np.maximum(dist, 1e-8)
-      unit = delta / dist
+        f_total = f_mag[:, None] * unit
 
-      stretch = dist.squeeze() - self.spring_rest
-      f_spring = self.spring_k * stretch
-
-      rel_vel = v1 - v0
-      vel_along  = (rel_vel * unit).sum(axis=1)
-      f_damp = self.spring_c * vel_along
-
-      f_total = (f_spring + f_damp)[:, None] * unit
-
-      np.add.at(forces, p0,  f_total)
-      np.add.at(forces, p1, -f_total)
+        np.add.at(forces, p0,  f_total)
+        np.add.at(forces, p1, -f_total)
 
     def _accumulate_external_forces(self, forces: np.ndarray) -> None:
-      """Gravity and wind forces."""
-      forces += self.masses[:, None] * self.forces.gravity[None, :]
+        """Gravity and wind forces."""
+        forces += self.masses[:, None] * self.forces.gravity[None, :]
 
-      if self.forces.wind_noise_scale > 0:
-        noise = (self.forces.wind_noise_scale * np.random.randn(2) * np.linalg.norm(self.forces.wind))
-      else:
-        noise = np.zeros(2)
+        if self.forces.wind_noise_scale > 0:
+            noise = (self.forces.wind_noise_scale
+                     * np.random.randn(2)
+                     * np.linalg.norm(self.forces.wind))
+        else:
+            noise = np.zeros(2)
 
-      wind_force = (self.forces.wind + noise) * self.masses[:, None]
-      forces += wind_force
+        forces += (self.forces.wind + noise) * self.masses[:, None]
 
     # ------------------------------------------------------------------
     # Spring cache
     # ------------------------------------------------------------------
 
     def _cache_springs(self) -> None:
-      """
-      Pre-extract spring data into flat numpy arrays for vectorised ops.
-      Doing this once at init avoids Python-level looping every step.
-      """
-      springs = self.mesh.springs
-      self.spring_p0   = np.array([s.p0         for s in springs], dtype=np.int32)
-      self.spring_p1   = np.array([s.p1         for s in springs], dtype=np.int32)
-      self.spring_rest = np.array([s.rest_length for s in springs], dtype=np.float64)
-      self.spring_k    = np.array([s.stiffness   for s in springs], dtype=np.float64)
-      self.spring_c    = np.array([s.damping     for s in springs], dtype=np.float64)
+        """
+        Pre-extract spring data into flat numpy arrays for vectorised ops.
+        Doing this once at init avoids Python-level looping every step.
+        """
+        springs          = self.mesh.springs
+        self.spring_p0   = np.array([s.p0         for s in springs], dtype=np.int32)
+        self.spring_p1   = np.array([s.p1         for s in springs], dtype=np.int32)
+        self.spring_rest = np.array([s.rest_length for s in springs], dtype=np.float64)
+        self.spring_k    = np.array([s.stiffness   for s in springs], dtype=np.float64)
+        self.spring_c    = np.array([s.damping     for s in springs], dtype=np.float64)
